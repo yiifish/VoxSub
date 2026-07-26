@@ -1,0 +1,971 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VoiceCut — 音频裁剪工具</title>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="https://cdn.jsdelivr.net/npm/lamejs@1.2.1/lame.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0c0c16;
+    --surface: #16162a;
+    --surface-hover: #1e1e3a;
+    --border: #2a2a48;
+    --text: #e2e2ee;
+    --text-dim: #7a7a9a;
+    --accent: #5b8def;
+    --accent-hover: #7aa5ff;
+    --selection: #ef6b3a;
+    --selection-bg: rgba(239, 107, 58, 0.2);
+    --playhead: #ffffff;
+    --waveform-fill: #5b8def;
+    --radius: 6px;
+    --transition: 150ms ease;
+  }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .app {
+    width: min(960px, 95vw);
+    height: min(640px, 90vh);
+    background: var(--surface);
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    position: relative;
+    box-shadow: 0 8px 48px rgba(0,0,0,0.4);
+  }
+
+  /* Drop zone */
+  .drop-zone {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    cursor: pointer;
+    border: 2px dashed var(--border);
+    margin: 24px;
+    border-radius: 12px;
+    transition: border-color var(--transition), background var(--transition);
+  }
+  .drop-zone:hover, .drop-zone.drag-over {
+    border-color: var(--accent);
+    background: rgba(91, 141, 239, 0.06);
+  }
+  .drop-zone .icon-wrap {
+    width: 64px; height: 64px;
+    border-radius: 50%;
+    background: rgba(91, 141, 239, 0.12);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .drop-zone .icon-wrap svg { width: 32px; height: 32px; stroke: var(--accent); }
+  .drop-zone p { font-size: 15px; color: var(--text-dim); }
+  .drop-zone .hint { font-size: 12px; color: var(--text-dim); opacity: 0.6; }
+
+  /* Header bar */
+  .header {
+    display: none;
+    align-items: center;
+    padding: 12px 20px;
+    gap: 12px;
+    border-bottom: 1px solid var(--border);
+    min-height: 52px;
+    flex-shrink: 0;
+  }
+  .header.show { display: flex; }
+  .header .file-name {
+    font-size: 14px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1;
+  }
+  .header .file-info {
+    font-size: 12px;
+    color: var(--text-dim);
+    white-space: nowrap;
+    display: flex;
+    gap: 16px;
+  }
+  .header .file-info span { display: flex; align-items: center; gap: 4px; }
+  .header .file-info svg { width: 14px; height: 14px; stroke: var(--text-dim); }
+
+  /* Waveform area */
+  .waveform-area {
+    display: none;
+    flex: 1;
+    position: relative;
+    padding: 16px 20px 8px;
+    min-height: 0;
+  }
+  .waveform-area.show { display: block; }
+
+  .waveform-wrap {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    cursor: crosshair;
+  }
+  .waveform-wrap canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  /* Time ruler */
+  .ruler {
+    display: none;
+    height: 20px;
+    padding: 0 20px;
+    position: relative;
+    flex-shrink: 0;
+  }
+  .ruler.show { display: block; }
+  .ruler canvas { display: block; width: 100%; height: 100%; }
+
+  /* Selection info bar */
+  .info-bar {
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 20px;
+    font-size: 12px;
+    color: var(--text-dim);
+    flex-shrink: 0;
+    min-height: 32px;
+  }
+  .info-bar.show { display: flex; }
+  .info-bar .time-group { display: flex; gap: 20px; }
+  .info-bar .time-group svg { width: 14px; height: 14px; stroke: var(--text-dim); vertical-align: middle; margin-right: 4px; }
+  .info-bar .sel-info { color: var(--selection); }
+  .info-bar .sel-info svg { stroke: var(--selection); }
+
+  /* Controls */
+  .controls {
+    display: none;
+    align-items: center;
+    padding: 10px 20px;
+    gap: 8px;
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .controls.show { display: flex; }
+  .controls .spacer { flex: 1; }
+  .controls button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: transparent;
+    color: var(--text);
+    font-size: 13px;
+    cursor: pointer;
+    transition: background var(--transition), border-color var(--transition);
+    white-space: nowrap;
+  }
+  .controls button:hover { background: var(--surface-hover); border-color: var(--accent); }
+  .controls button svg { width: 16px; height: 16px; }
+  .controls button.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+  .controls button.primary:hover { background: var(--accent-hover); }
+  .controls button.primary svg { stroke: #fff; }
+  .controls button.danger {
+    border-color: var(--selection);
+    color: var(--selection);
+  }
+  .controls button.danger:hover { background: rgba(239, 107, 58, 0.12); }
+  .controls button.danger svg { stroke: var(--selection); }
+  .controls button:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+    border-color: var(--border);
+  }
+.controls button:disabled:hover { background: transparent; }
+
+.controls .format-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color var(--transition);
+  -webkit-appearance: none;
+  appearance: none;
+}
+  .controls .format-select:hover { border-color: var(--accent); }
+  .controls .format-select:focus { outline: none; border-color: var(--accent); }
+
+  /* Keyboard shortcuts tooltip */
+  .shortcuts-hint {
+    font-size: 11px;
+    color: var(--text-dim);
+    opacity: 0.5;
+    display: flex;
+    gap: 12px;
+    margin-left: auto;
+  }
+  .shortcuts-hint kbd {
+    padding: 1px 5px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    font-family: inherit;
+    font-size: 10px;
+    background: rgba(255,255,255,0.04);
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  @media (max-width: 600px) {
+    .app { width: 100vw; height: 100vh; border-radius: 0; }
+    .drop-zone { margin: 16px; }
+    .header { padding: 10px 14px; flex-wrap: wrap; }
+    .header .file-info { gap: 10px; flex-wrap: wrap; }
+    .controls { flex-wrap: wrap; }
+    .controls button { padding: 6px 10px; font-size: 12px; }
+    .shortcuts-hint { display: none; }
+    .info-bar .time-group { gap: 12px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="app" id="app">
+  <!-- Drop zone -->
+  <div class="drop-zone" id="dropZone">
+    <div class="icon-wrap">
+      <svg id="dropIcon" data-lucide="music" width="32" height="32" stroke-width="1.5"></svg>
+    </div>
+    <p>拖放音频文件到这里，或点击浏览</p>
+    <span class="hint">支持 WAV, MP3, OGG, FLAC, M4A</span>
+    <input type="file" id="fileInput" accept="audio/*" hidden>
+  </div>
+
+  <!-- Header -->
+  <div class="header" id="header">
+    <span class="file-name" id="fileName">—</span>
+    <div class="file-info">
+      <span><svg data-lucide="clock" width="14" height="14" stroke-width="1.5"></svg><span id="fileDuration">0:00</span></span>
+      <span><svg data-lucide="waveform" width="14" height="14" stroke-width="1.5"></svg><span id="fileSampleRate">— kHz</span></span>
+      <span><svg data-lucide="radio" width="14" height="14" stroke-width="1.5"></svg><span id="fileChannels">— ch</span></span>
+    </div>
+  </div>
+
+  <!-- Time ruler -->
+  <div class="ruler" id="ruler">
+    <canvas id="rulerCanvas"></canvas>
+  </div>
+
+  <!-- Waveform -->
+  <div class="waveform-area" id="waveformArea">
+    <div class="waveform-wrap" id="waveformWrap">
+      <canvas id="waveformCanvas"></canvas>
+    </div>
+  </div>
+
+  <!-- Info bar -->
+  <div class="info-bar" id="infoBar">
+    <div class="time-group">
+      <span><svg data-lucide="play" width="14" height="14" stroke-width="1.5"></svg><span id="currentTime">0:00.000</span></span>
+      <span><svg data-lucide="clock" width="14" height="14" stroke-width="1.5"></svg><span id="totalTime">0:00.000</span></span>
+    </div>
+    <div class="time-group sel-info">
+      <span><svg data-lucide="scissors" width="14" height="14" stroke-width="1.5"></svg><span id="selInfo">未选择</span></span>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div class="controls" id="controls">
+    <button id="btnPlay" title="播放/暂停 (Space)"><svg data-lucide="play" width="16" height="16" stroke-width="1.5"></svg><span>播放</span></button>
+    <button id="btnStop" title="停止"><svg data-lucide="square" width="16" height="16" stroke-width="1.5"></svg></button>
+    <button id="btnZoomIn" title="放大"><svg data-lucide="zoom-in" width="16" height="16" stroke-width="1.5"></svg></button>
+    <button id="btnZoomOut" title="缩小"><svg data-lucide="zoom-out" width="16" height="16" stroke-width="1.5"></svg></button>
+    <button id="btnFit" title="适应窗口"><svg data-lucide="maximize" width="16" height="16" stroke-width="1.5"></svg></button>
+    <div class="spacer"></div>
+    <select class="format-select" id="formatSelect" title="导出格式">
+      <option value="wav">WAV</option>
+      <option value="mp3">MP3</option>
+    </select>
+    <button id="btnExport" class="primary" disabled title="导出选区 (Ctrl+E)"><svg data-lucide="download" width="16" height="16" stroke-width="1.5"></svg><span>导出选区</span></button>
+    <div class="shortcuts-hint">
+      <span><kbd>Space</kbd> 播放</span>
+      <span><kbd>⌘E</kbd> 导出</span>
+    </div>
+  </div>
+</div>
+
+<script>
+// ======================== State ========================
+const state = {
+  audioBuffer: null,
+  fileName: '',
+  sampleRate: 0,
+  channels: 0,
+  duration: 0,
+  selStart: 0,
+  selEnd: 0,
+  hasSelection: false,
+  isPlaying: false,
+  playStartTime: 0,
+  playStartOffset: 0,
+  sourceNode: null,
+  animFrameId: null,
+  zoom: 1,
+  dragState: null,
+  handleRadius: 6,
+  _playheadSec: 0,
+  _playheadX: null,
+};
+
+let audioCtx = null;
+function getAudioCtx() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  return audioCtx;
+}
+
+// ======================== DOM refs ========================
+const $ = id => document.getElementById(id);
+const dropZone = $('dropZone');
+const fileInput = $('fileInput');
+const header = $('header');
+const fileName = $('fileName');
+const fileDuration = $('fileDuration');
+const fileSampleRate = $('fileSampleRate');
+const fileChannels = $('fileChannels');
+const ruler = $('ruler');
+const rulerCanvas = $('rulerCanvas');
+const waveformArea = $('waveformArea');
+const waveformWrap = $('waveformWrap');
+const waveformCanvas = $('waveformCanvas');
+const infoBar = $('infoBar');
+const currentTime = $('currentTime');
+const totalTime = $('totalTime');
+const selInfo = $('selInfo');
+const controls = $('controls');
+const btnPlay = $('btnPlay');
+const btnStop = $('btnStop');
+const btnZoomIn = $('btnZoomIn');
+const btnZoomOut = $('btnZoomOut');
+const btnFit = $('btnFit');
+const btnExport = $('btnExport');
+const formatSelect = $('formatSelect');
+
+// ======================== Helpers ========================
+function fmtTime(sec) {
+  if (sec == null || isNaN(sec)) return '0:00.000';
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  const ms = Math.floor((sec % 1) * 1000);
+  return `${m}:${String(s).padStart(2, '0')}.${String(ms).padStart(3, '0')}`;
+}
+
+function fmtTimeShort(sec) {
+  if (sec == null || isNaN(sec)) return '0:00';
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+// ======================== Layout ========================
+let dpr = 1;
+
+function getWaveRect(cw, ch) {
+  return { x: 0, y: 4, w: cw, h: ch - 8 };
+}
+
+function resizeCanvases() {
+  if (!state.audioBuffer) return;
+  dpr = window.devicePixelRatio || 1;
+
+  const rw = rulerCanvas.parentElement.clientWidth;
+  rulerCanvas.width = rw * dpr;
+  rulerCanvas.height = RULER_H * dpr;
+  rulerCanvas.style.width = rw + 'px';
+  rulerCanvas.style.height = RULER_H + 'px';
+
+  const ww = waveformWrap.clientWidth;
+  const wh = waveformWrap.clientHeight;
+  waveformCanvas.width = ww * dpr;
+  waveformCanvas.height = wh * dpr;
+  waveformCanvas.style.width = ww + 'px';
+  waveformCanvas.style.height = wh + 'px';
+
+  drawAll();
+}
+const RULER_H = 20;
+
+// ======================== Drawing ========================
+function drawAll() {
+  if (!state.audioBuffer) return;
+  drawWaveform();
+  drawRuler();
+  updateInfoBar();
+}
+
+function drawWaveform() {
+  const buf = state.audioBuffer;
+  const c = waveformCanvas;
+  const w = c.width;
+  const h = c.height;
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, w, h);
+
+  const wr = getWaveRect(w, h);
+  const dur = buf.duration;
+  const viewDur = dur / state.zoom;
+  const pxPerSec = wr.w / viewDur;
+  if (wr.w <= 0 || wr.h <= 0) return;
+
+  // Get channel data
+  const chData = [];
+  for (let ch = 0; ch < buf.numberOfChannels; ch++) {
+    chData.push(buf.getChannelData(ch));
+  }
+  const nCh = chData.length;
+  const centerY = wr.y + wr.h / 2;
+  const amp = (wr.h / 2) * 0.88;
+
+  for (let px = 0; px < wr.w; px++) {
+    const t = px / pxPerSec;
+    const startS = Math.floor(t * buf.sampleRate);
+    const endS = Math.floor((t + 1 / pxPerSec) * buf.sampleRate);
+
+    let maxVal = 0;
+    for (let ch = 0; ch < nCh; ch++) {
+      const data = chData[ch];
+      const clampedStart = Math.max(0, startS);
+      const clampedEnd = Math.min(endS, data.length);
+      for (let s = clampedStart; s < clampedEnd; s++) {
+        const v = Math.abs(data[s]);
+        if (v > maxVal) maxVal = v;
+      }
+    }
+
+    const x = wr.x + px;
+    const hVal = Math.max(maxVal * amp, 0.5);
+    const isSelected = state.hasSelection &&
+      (t >= state.selStart && t <= state.selEnd);
+
+    // Selection background tint
+    if (isSelected) {
+      ctx.fillStyle = state.isPlaying
+        ? 'rgba(239,107,58,0.10)'
+        : 'rgba(239,107,58,0.08)';
+      ctx.fillRect(x, wr.y, 1, wr.h);
+    }
+
+    ctx.fillStyle = isSelected ? '#ef6b3a' : '#5b8def';
+    ctx.fillRect(x, centerY - hVal, 1, hVal * 2);
+  }
+
+  // Selection boundary lines and handles
+  if (state.hasSelection) {
+    const sx = wr.x + state.selStart * pxPerSec;
+    const ex = wr.x + state.selEnd * pxPerSec;
+    const r = state.handleRadius * dpr;
+
+    // Dashed boundary lines
+    ctx.save();
+    ctx.strokeStyle = 'rgba(239,107,58,0.5)';
+    ctx.lineWidth = 1 * dpr;
+    ctx.setLineDash([4 * dpr, 4 * dpr]);
+    ctx.beginPath(); ctx.moveTo(sx, wr.y); ctx.lineTo(sx, wr.y + wr.h); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(ex, wr.y); ctx.lineTo(ex, wr.y + wr.h); ctx.stroke();
+    ctx.restore();
+
+    // Handle: left triangle
+    ctx.fillStyle = '#ef6b3a';
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 1.5 * dpr;
+    ctx.beginPath();
+    ctx.moveTo(sx - r * 1.2, centerY);
+    ctx.lineTo(sx, centerY - r);
+    ctx.lineTo(sx, centerY + r);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Handle: right triangle
+    ctx.beginPath();
+    ctx.moveTo(ex + r * 1.2, centerY);
+    ctx.lineTo(ex, centerY - r);
+    ctx.lineTo(ex, centerY + r);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Selection duration label
+    const selDur = state.selEnd - state.selStart;
+    const cx = (sx + ex) / 2;
+    ctx.fillStyle = 'rgba(239,107,58,0.7)';
+    ctx.font = `${11 * dpr}px -apple-system, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText(fmtTimeShort(selDur), cx, wr.y + 12 * dpr);
+  }
+
+  // Playhead
+  if (state.isPlaying && state._playheadX != null) {
+    const phx = wr.x + state._playheadX;
+    ctx.save();
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.5 * dpr;
+    ctx.beginPath(); ctx.moveTo(phx, wr.y); ctx.lineTo(phx, wr.y + wr.h); ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.moveTo(phx, wr.y);
+    ctx.lineTo(phx - 5 * dpr, wr.y + 8 * dpr);
+    ctx.lineTo(phx + 5 * dpr, wr.y + 8 * dpr);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // Center line
+  ctx.save();
+  ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+  ctx.lineWidth = 1 * dpr;
+  ctx.beginPath(); ctx.moveTo(wr.x, centerY); ctx.lineTo(wr.x + wr.w, centerY); ctx.stroke();
+  ctx.restore();
+}
+
+function drawRuler() {
+  const c = rulerCanvas;
+  const w = c.width;
+  const h = c.height;
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, w, h);
+
+  if (!state.audioBuffer) return;
+  const dur = state.audioBuffer.duration;
+  const viewDur = dur / state.zoom;
+  const pxPerSec = w / viewDur;
+
+  ctx.fillStyle = 'rgba(255,255,255,0.35)';
+  ctx.font = `${10 * dpr}px -apple-system, sans-serif`;
+  ctx.textAlign = 'center';
+
+  let tickInt = 1;
+  const pxPerTick = pxPerSec * tickInt;
+  if (pxPerTick < 40 * dpr) tickInt = 5;
+  else if (pxPerTick < 25 * dpr) tickInt = 2;
+  else if (pxPerTick > 180 * dpr) tickInt = 0.5;
+  else if (pxPerTick > 300 * dpr) tickInt = 0.2;
+
+  for (let t = 0; t <= viewDur; t += tickInt) {
+    const x = t * pxPerSec;
+    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+    ctx.lineWidth = 1 * dpr;
+    ctx.beginPath(); ctx.moveTo(x, h * 0.4); ctx.lineTo(x, h); ctx.stroke();
+    ctx.fillText(fmtTimeShort(t), x, h * 0.4 - 2 * dpr);
+  }
+}
+
+function updateInfoBar() {
+  if (!state.audioBuffer) return;
+  const cur = (state.isPlaying && state._playheadSec != null)
+    ? state._playheadSec
+    : (state.hasSelection ? state.selStart : 0);
+  currentTime.textContent = fmtTime(cur);
+  totalTime.textContent = fmtTime(state.duration);
+
+  if (state.hasSelection) {
+    const d = state.selEnd - state.selStart;
+    selInfo.innerHTML = `${fmtTimeShort(state.selStart)} — ${fmtTimeShort(state.selEnd)} (${fmtTimeShort(d)})`;
+  } else {
+    selInfo.textContent = '未选择 — 在波形上拖拽选择区域';
+  }
+}
+
+// ======================== Audio Loading ========================
+async function loadFile(file) {
+  const ctx = getAudioCtx();
+  const ab = await file.arrayBuffer();
+  const buf = await ctx.decodeAudioData(ab);
+
+  state.audioBuffer = buf;
+  state.fileName = file.name;
+  state.sampleRate = buf.sampleRate;
+  state.channels = buf.numberOfChannels;
+  state.duration = buf.duration;
+  state.selStart = 0;
+  state.selEnd = buf.duration;
+  state.hasSelection = true;
+  state.isPlaying = false;
+  state.zoom = 1;
+  state._playheadSec = 0;
+
+  dropZone.style.display = 'none';
+  header.classList.add('show');
+  ruler.classList.add('show');
+  waveformArea.classList.add('show');
+  infoBar.classList.add('show');
+  controls.classList.add('show');
+
+  fileName.textContent = file.name;
+  fileDuration.textContent = fmtTimeShort(buf.duration);
+  fileSampleRate.textContent = `${(buf.sampleRate / 1000).toFixed(1)} kHz`;
+  fileChannels.textContent = `${buf.numberOfChannels} ch`;
+  btnExport.disabled = false;
+
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      resizeCanvases();
+      lucide.createIcons();
+    });
+  });
+}
+
+// ======================== Playback ========================
+function playSelection() {
+  if (state.isPlaying) { pausePlayback(); return; }
+  if (!state.audioBuffer) return;
+  const ctx = getAudioCtx();
+  if (ctx.state === 'suspended') ctx.resume();
+
+  const buf = state.audioBuffer;
+  const startT = state.hasSelection ? state.selStart : 0;
+  const endT = state.hasSelection ? state.selEnd : buf.duration;
+  const dur = endT - startT;
+  if (dur <= 0) return;
+  stopPlayback();
+
+  const source = ctx.createBufferSource();
+  source.buffer = buf;
+  source.connect(ctx.destination);
+  source.start(0, startT, dur);
+
+  state.sourceNode = source;
+  state.isPlaying = true;
+  state.playStartTime = ctx.currentTime;
+  state.playStartOffset = startT;
+
+  source.onended = () => {
+    if (state.isPlaying) {
+      state.isPlaying = false;
+      state._playheadSec = endT;
+      updatePlayButton();
+      drawAll();
+    }
+  };
+
+  updatePlayButton();
+  startPlayheadAnimation();
+}
+
+function pausePlayback() {
+  if (!state.isPlaying) return;
+  if (state.sourceNode) { try { state.sourceNode.stop(); } catch(e) {} state.sourceNode = null; }
+  state.isPlaying = false;
+  if (state.animFrameId) { cancelAnimationFrame(state.animFrameId); state.animFrameId = null; }
+  updatePlayButton();
+  drawAll();
+}
+
+function stopPlayback() {
+  pausePlayback();
+  state._playheadSec = state.hasSelection ? state.selStart : 0;
+  drawAll();
+}
+
+function startPlayheadAnimation() {
+  if (state.animFrameId) cancelAnimationFrame(state.animFrameId);
+  const tick = () => {
+    if (!state.isPlaying || !state.audioBuffer) { state.animFrameId = null; return; }
+    const ctx = getAudioCtx();
+    const elapsed = ctx.currentTime - state.playStartTime;
+    let t = state.playStartOffset + elapsed;
+    const endT = state.hasSelection ? state.selEnd : state.audioBuffer.duration;
+    if (t >= endT) { pausePlayback(); drawAll(); return; }
+    state._playheadSec = t;
+    const viewDur = state.audioBuffer.duration / state.zoom;
+    state._playheadX = t * (waveformCanvas.width / viewDur);
+    drawAll();
+    state.animFrameId = requestAnimationFrame(tick);
+  };
+  state.animFrameId = requestAnimationFrame(tick);
+}
+
+function updatePlayButton() {
+  const icon = btnPlay.querySelector('svg');
+  const label = btnPlay.querySelector('span');
+  if (state.isPlaying) {
+    icon.setAttribute('data-lucide', 'pause');
+    label.textContent = '暂停';
+  } else {
+    icon.setAttribute('data-lucide', 'play');
+    label.textContent = '播放';
+  }
+  lucide.createIcons();
+}
+
+// ======================== Export ========================
+function exportSelection() {
+  if (!state.audioBuffer || !state.hasSelection) return;
+  const buf = state.audioBuffer;
+  const startS = Math.round(state.selStart * buf.sampleRate);
+  const endS = Math.round(state.selEnd * buf.sampleRate);
+  const len = endS - startS;
+  if (len <= 0) return;
+
+  const nCh = buf.numberOfChannels;
+  const sr = buf.sampleRate;
+
+  const fmt = formatSelect.value;
+  const stem = state.fileName.replace(/\.[^/.]+$/, '');
+
+  if (fmt === 'mp3') {
+    // Use lamejs for MP3 encoding
+    if (typeof lamejs === 'undefined') {
+      alert('MP3 编码库未加载，请检查网络连接后刷新页面重试。');
+      return;
+    }
+    const mp3encoder = new lamejs.Mp3Encoder(nCh, sr, 192);
+    const mp3Data = [];
+    const chunkSize = 1152;
+
+    if (nCh === 1) {
+      const samples = new Int16Array(len);
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < len; i++) {
+        let s = Math.max(-1, Math.min(1, data[startS + i]));
+        samples[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+      }
+      for (let i = 0; i < samples.length; i += chunkSize) {
+        const end = Math.min(i + chunkSize, samples.length);
+        const mp3 = mp3encoder.encodeBuffer(samples.subarray(i, end));
+        if (mp3.length > 0) mp3Data.push(mp3);
+      }
+    } else {
+      const left = new Int16Array(len);
+      const right = new Int16Array(len);
+      const leftData = buf.getChannelData(0);
+      const rightData = buf.getChannelData(Math.min(1, nCh - 1));
+      for (let i = 0; i < len; i++) {
+        let s = Math.max(-1, Math.min(1, leftData[startS + i]));
+        left[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+        s = Math.max(-1, Math.min(1, rightData[startS + i]));
+        right[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+      }
+      for (let i = 0; i < len; i += chunkSize) {
+        const end = Math.min(i + chunkSize, len);
+        const mp3 = mp3encoder.encodeBuffer(left.subarray(i, end), right.subarray(i, end));
+        if (mp3.length > 0) mp3Data.push(mp3);
+      }
+    }
+
+    const last = mp3encoder.flush();
+    if (last.length > 0) mp3Data.push(last);
+
+    const blob = new Blob(mp3Data, { type: 'audio/mpeg' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `${stem}_cut.mp3`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    return;
+  }
+
+  // Default: WAV export
+  const interleaved = new Float32Array(len * nCh);
+  for (let ch = 0; ch < nCh; ch++) {
+    const data = buf.getChannelData(ch);
+    for (let i = 0; i < len; i++) interleaved[i * nCh + ch] = data[startS + i];
+  }
+ 
+  const bps = 16;
+  const byteRate = sr * nCh * bps / 8;
+  const blockAlign = nCh * bps / 8;
+  const dataSize = len * nCh * bps / 8;
+  const bufSize = 44 + dataSize;
+  const wb = new ArrayBuffer(bufSize);
+  const v = new DataView(wb);
+  const s = (off, str) => { for (let i = 0; i < str.length; i++) v.setUint8(off + i, str.charCodeAt(i)); };
+  s(0, 'RIFF');
+  v.setUint32(4, bufSize - 8, true);
+  s(8, 'WAVE');
+  s(12, 'fmt ');
+  v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true);
+  v.setUint16(22, nCh, true);
+  v.setUint32(24, sr, true);
+  v.setUint32(28, byteRate, true);
+  v.setUint16(32, blockAlign, true);
+  v.setUint16(34, bps, true);
+  s(36, 'data');
+  v.setUint32(40, dataSize, true);
+
+  let off = 44;
+  for (let i = 0; i < interleaved.length; i++) {
+    let s = Math.max(-1, Math.min(1, interleaved[i]));
+    s = s < 0 ? s * 0x8000 : s * 0x7FFF;
+    v.setInt16(off, s, true);
+    off += 2;
+  }
+
+  const blob = new Blob([wb], { type: 'audio/wav' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `${stem}_cut.wav`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// ======================== Mouse Interaction ========================
+function canvasToTime(clientX) {
+  const rect = waveformCanvas.getBoundingClientRect();
+  const x = (clientX - rect.left) * dpr;
+  const wr = getWaveRect(waveformCanvas.width, waveformCanvas.height);
+  const relX = x - wr.x;
+  const dur = state.audioBuffer.duration;
+  const viewDur = dur / state.zoom;
+  return Math.max(0, Math.min(dur, relX / (wr.w / viewDur)));
+}
+
+function getHandlePx(sec) {
+  const wr = getWaveRect(waveformCanvas.width, waveformCanvas.height);
+  const dur = state.audioBuffer.duration;
+  const pxPerSec = wr.w / (dur / state.zoom);
+  return wr.x + sec * pxPerSec;
+}
+
+function hitTestHandle(clientX, clientY) {
+  if (!state.hasSelection) return null;
+  const rect = waveformCanvas.getBoundingClientRect();
+  const mx = (clientX - rect.left) * dpr;
+  const my = (clientY - rect.top) * dpr;
+  const wr = getWaveRect(waveformCanvas.width, waveformCanvas.height);
+  const cy = wr.y + wr.h / 2;
+  const pxS = getHandlePx(state.selStart);
+  const pxE = getHandlePx(state.selEnd);
+  const r = state.handleRadius * dpr * 1.8;
+  if (Math.hypot(mx - pxS, my - cy) <= r) return 'handleStart';
+  if (Math.hypot(mx - pxE, my - cy) <= r) return 'handleEnd';
+  return null;
+}
+
+function onWaveformMouseDown(e) {
+  if (!state.audioBuffer) return;
+  const h = hitTestHandle(e.clientX, e.clientY);
+  if (h) {
+    state.dragState = { type: h, startX: e.clientX, startSelS: state.selStart, startSelE: state.selEnd };
+    return;
+  }
+  const t = canvasToTime(e.clientX);
+  state.dragState = { type: 'sel', startX: e.clientX, startSelS: t, startSelE: t };
+  state.hasSelection = true;
+  state.selStart = t;
+  state.selEnd = t;
+  if (state.isPlaying) pausePlayback();
+}
+
+function onWaveformMouseMove(e) {
+  if (!state.dragState) {
+    waveformWrap.style.cursor = hitTestHandle(e.clientX, e.clientY) ? 'ew-resize' : 'crosshair';
+    return;
+  }
+  const t = canvasToTime(e.clientX);
+  const ds = state.dragState;
+  if (ds.type === 'sel') {
+    state.selStart = Math.min(ds.startSelS, t);
+    state.selEnd = Math.max(ds.startSelS, t);
+  } else if (ds.type === 'handleStart') {
+    state.selStart = Math.max(0, Math.min(t, state.selEnd - 0.005));
+  } else if (ds.type === 'handleEnd') {
+    state.selEnd = Math.min(state.audioBuffer.duration, Math.max(t, state.selStart + 0.005));
+  }
+  drawAll();
+}
+
+function onWaveformMouseUp(e) {
+  if (!state.dragState) return;
+  const ds = state.dragState;
+  state.dragState = null;
+  if (ds.type === 'sel' && Math.abs(state.selEnd - state.selStart) < 0.005) {
+    const t = canvasToTime(e.clientX);
+    state.hasSelection = false;
+    state._playheadSec = t;
+    if (!state.isPlaying) drawAll();
+  }
+  waveformWrap.style.cursor = 'crosshair';
+  drawAll();
+}
+
+// ======================== Zoom ========================
+function zoomIn() {
+  if (!state.audioBuffer) return;
+  state.zoom = Math.min(state.zoom * 2, 128);
+  resizeCanvases();
+}
+function zoomOut() {
+  if (!state.audioBuffer) return;
+  state.zoom = Math.max(state.zoom / 2, 1);
+  resizeCanvases();
+}
+function zoomFit() {
+  if (!state.audioBuffer) return;
+  state.zoom = 1;
+  resizeCanvases();
+}
+
+// ======================== Events ========================
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault(); dropZone.classList.remove('drag-over');
+  const f = e.dataTransfer.files[0];
+  if (f && f.type.startsWith('audio/')) loadFile(f);
+});
+fileInput.addEventListener('change', () => { if (fileInput.files[0]) loadFile(fileInput.files[0]); });
+
+waveformCanvas.addEventListener('mousedown', onWaveformMouseDown);
+window.addEventListener('mousemove', onWaveformMouseMove);
+window.addEventListener('mouseup', onWaveformMouseUp);
+
+btnPlay.addEventListener('click', playSelection);
+btnStop.addEventListener('click', stopPlayback);
+btnZoomIn.addEventListener('click', zoomIn);
+btnZoomOut.addEventListener('click', zoomOut);
+btnFit.addEventListener('click', zoomFit);
+btnExport.addEventListener('click', exportSelection);
+
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return;
+  if (e.code === 'Space') { e.preventDefault(); if (state.audioBuffer) playSelection(); }
+  if ((e.ctrlKey || e.metaKey) && e.code === 'KeyE') { e.preventDefault(); if (state.audioBuffer && state.hasSelection) exportSelection(); }
+  if (e.code === 'KeyF' && !e.ctrlKey && !e.metaKey && !e.altKey) zoomFit();
+});
+window.addEventListener('resize', () => { if (state.audioBuffer) resizeCanvases(); });
+
+lucide.createIcons();
+console.log('VoiceCut ready');
+</script>
+</body>
+</html>
