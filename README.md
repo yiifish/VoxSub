@@ -1,18 +1,14 @@
-﻿<p align="center">
-  <a href="#english">English</a> &nbsp;|&nbsp;
-  <a href="#chinese">中文</a>
+﻿<h1 align="center">VoxSub</h1>
+<p align="center"><em>Your voice, subbed.</em></p>
+<p align="center">
+  <a href="https://python.org"><img src="https://img.shields.io/badge/python-3.9+-blue" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" /></a>
 </p>
 
 ---
 
-<h1 align="center">VoxSub</h1>
-<p align="center"><em>Your voice, subbed.</em></p>
-
----
-
-<div id="english">
-
-## English
+<details open>
+<summary><b>English</b></summary>
 
 VoxSub is a fully offline toolset for video/audio subtitle generation. Drop in a video or audio file and get SRT subtitles in one shot — audio extraction, speech transcription, subtitle generation, and machine translation — all running locally with CUDA GPU acceleration powered by faster-whisper and CTranslate2.
 
@@ -45,40 +41,20 @@ pip install -r requirements.txt
 
 #### Prepare the Whisper Model
 
-VoxSub uses the CTranslate2 format, which runs significantly faster than the original Whisper. You have two options:
-
-**Option A: Download a pre-converted model (recommended)**
-
-faster-whisper provides pre-converted CTranslate2 models on HuggingFace. Choose one:
-
-| Model | Size | Memory | Speed | Quality |
-|-------|------|--------|-------|---------|
-| `tiny` | ~150 MB | ~1 GB | Fastest | Basic |
-| `base` | ~290 MB | ~1 GB | Fast | Moderate |
-| `small` | ~970 MB | ~2 GB | Moderate | Good |
-| `medium` | ~3.1 GB | ~5 GB | Moderate | Great |
-| `large-v3` | ~3.1 GB | ~5 GB | Slower | Best |
-| `turbo` | ~1.6 GB | ~3 GB | Fast | Excellent |
-
-Download via Python:
+VoxSub runs on CTranslate2-format Whisper models. Download one via faster-whisper:
 
 ```python
 from faster_whisper import download_model
 download_model("turbo", output_dir="models/whisper-turbo-ct2")
-# Or: download_model("large-v3", output_dir="models/whisper-large-v3-ct2")
 ```
 
-Then update `MODEL_PATH` in `server.py` to match the directory.
+Pre-converted models are available on HuggingFace. `turbo` (~1.6 GB) is recommended for a good speed/quality balance; `large-v3` (~3.1 GB) gives the best accuracy. Update `MODEL_PATH` in `server.py` to match the output directory.
 
-**Option B: Convert from HuggingFace yourself**
+Alternatively, convert from HuggingFace yourself:
 
 ```bash
-pip install ctranslate2 transformers
 ct2-transformers-converter --model openai/whisper-turbo --output_dir models/whisper-turbo-ct2
-ct2-transformers-converter --model openai/whisper-large-v3 --output_dir models/whisper-large-v3-ct2
 ```
-
-The resulting directory should contain: `config.json`, `model.bin`, `tokenizer.json`, `vocabulary.json`, and `preprocessor_config.json`.
 
 #### Run
 
@@ -138,9 +114,6 @@ Tweak these at the top of each source file:
 
 ### Tech Stack
 
-[![Python](https://img.shields.io/badge/python-3.9+-blue)](https://python.org)
-[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-
 - [faster-whisper](https://github.com/SYSTRAN/faster-whisper) — CTranslate2-accelerated Whisper inference
 - [CTranslate2](https://github.com/OpenNMT/CTranslate2) — High-performance Transformer inference engine
 - [FFmpeg](https://ffmpeg.org/) — Audio/video codec
@@ -152,13 +125,10 @@ Tweak these at the top of each source file:
 
 MIT
 
-</div>
+</details>
 
----
-
-<div id="chinese">
-
-## 中文
+<details>
+<summary><b>中文</b></summary>
 
 VoxSub 是一套本地离线运行的音视频字幕处理工具集。拖入视频或音频，一键完成：提取音频、语音转录、生成 SRT 字幕、翻译为中文。基于 faster-whisper + CTranslate2 引擎，支持 CUDA GPU 加速。
 
@@ -191,40 +161,20 @@ pip install -r requirements.txt
 
 #### 准备 Whisper 模型
 
-VoxSub 使用 CTranslate2 格式的 Whisper 模型，推理速度比原始模型快数倍。有两种方式准备：
-
-**方式 A：下载预转换模型（推荐）**
-
-faster-whisper 在 HuggingFace 上提供了预转换的 CTranslate2 模型，可选以下规格：
-
-| 模型 | 大小 | 内存 | 速度 | 质量 |
-|------|------|------|------|------|
-| `tiny` | ~150 MB | ~1 GB | 极快 | 基础 |
-| `base` | ~290 MB | ~1 GB | 快 | 一般 |
-| `small` | ~970 MB | ~2 GB | 中等 | 良好 |
-| `medium` | ~3.1 GB | ~5 GB | 中等 | 优秀 |
-| `large-v3` | ~3.1 GB | ~5 GB | 较慢 | 最佳 |
-| `turbo` | ~1.6 GB | ~3 GB | 快 | 出色 |
-
-Python 下载：
+VoxSub 使用 CTranslate2 格式的 Whisper 模型。通过 faster-whisper 下载：
 
 ```python
 from faster_whisper import download_model
 download_model("turbo", output_dir="models/whisper-turbo-ct2")
-# 或: download_model("large-v3", output_dir="models/whisper-large-v3-ct2")
 ```
 
-下载后修改 `server.py` 中的 `MODEL_PATH` 指向对应目录。
+推荐 `turbo`（~1.6 GB），速度和质量的均衡之选；追求最佳精度可选 `large-v3`（~3.1 GB）。下载后修改 `server.py` 中 `MODEL_PATH` 指向对应目录。
 
-**方式 B：自行从 HuggingFace 转换**
+也可自行转换：
 
 ```bash
-pip install ctranslate2 transformers
 ct2-transformers-converter --model openai/whisper-turbo --output_dir models/whisper-turbo-ct2
-ct2-transformers-converter --model openai/whisper-large-v3 --output_dir models/whisper-large-v3-ct2
 ```
-
-转换后的目录应包含：`config.json`、`model.bin`、`tokenizer.json`、`vocabulary.json`、`preprocessor_config.json`。
 
 #### 启动
 
@@ -268,7 +218,7 @@ python subtitle.py          # 纯音频转字幕 → :8765
 | POST | `/pipeline` | 全流程：提取 + 转录 + SRT |
 | POST | `/translate` | SRT 文本翻译 |
 
-所有 POST 接口通过 Server-Sent Events 返回实时进度，前端自动消费进度流。
+所有 POST 接口通过 Server-Sent Events 返回实时进度。
 
 ### 配置
 
@@ -284,9 +234,6 @@ python subtitle.py          # 纯音频转字幕 → :8765
 
 ### 技术选型
 
-[![Python](https://img.shields.io/badge/python-3.9+-blue)](https://python.org)
-[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-
 - [faster-whisper](https://github.com/SYSTRAN/faster-whisper) — CTranslate2 加速 Whisper
 - [CTranslate2](https://github.com/OpenNMT/CTranslate2) — Transformer 推理引擎
 - [FFmpeg](https://ffmpeg.org/) — 音视频编解码
@@ -298,4 +245,4 @@ python subtitle.py          # 纯音频转字幕 → :8765
 
 MIT
 
-</div>
+</details>
