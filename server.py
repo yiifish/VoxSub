@@ -56,7 +56,8 @@ def to_srt(segs):
     out=[]
     for i, sg in enumerate(segs, 1):
         t=sg.text.strip()
-    if t: out.extend([str(i), f"{fmt_srt(sg.start)} --> {fmt_srt(sg.end)}", t, ''])
+        if t:
+            out.extend([str(i), f"{fmt_srt(sg.start)} --> {fmt_srt(sg.end)}", t, ''])
     return '\n'.join(out)
 # ==================== Transcribe ====================
 def transcribe_audio(path, sse, lang=None, beam_size=5):
