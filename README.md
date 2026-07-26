@@ -1,8 +1,8 @@
-﻿# VoiceCut
+﻿# VoxSub
 
 > 视频音频提取 & 语音转字幕 & 字幕翻译 —— 一站式本地处理工具
 
-VoiceCut 是一套基于 **faster-whisper** 和 **FFmpeg** 的本地音视频处理工具集，提供视频音频提取、长音频/视频自动分段转录、字幕导出（SRT）以及字幕翻译功能。全部在本地运行，无需联网，可选 CUDA GPU 加速。
+VoxSub 是一套基于 **faster-whisper** 和 **FFmpeg** 的本地音视频处理工具集，提供视频音频提取、长音频/视频自动分段转录、字幕导出（SRT）以及字幕翻译功能。全部在本地运行，无需联网，可选 CUDA GPU 加速。
 
 ---
 
@@ -17,7 +17,7 @@ VoiceCut 是一套基于 **faster-whisper** 和 **FFmpeg** 的本地音视频处
 
 ## 架构
 
-voicecut/
+voxsub/
 ├── server.py          # 主服务（端口 8768）：Web UI + 全流程管道 + 翻译
 ├── extract_server.py  # 独立音频提取服务（端口 8767）
 ├── subtitle.py        # 独立字幕转录服务（端口 8765）
@@ -98,3 +98,7 @@ python subtitle.py          # http://127.0.0.1:8765
 ## License
 
 MIT
+
+
+
+

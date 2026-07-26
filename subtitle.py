@@ -1,5 +1,5 @@
-#!/usr/bin/env python3
-"""VoiceCut Subtitle — 长音频转字幕 (faster-whisper + FFmpeg)"""
+﻿#!/usr/bin/env python3
+"""VoxSub Subtitle — 长音频转字幕 (faster-whisper + FFmpeg)"""
 
 import os, sys, json, re, tempfile, struct, threading, subprocess
 from urllib.parse import urlparse
@@ -45,6 +45,50 @@ def segments_to_srt(segments):
             lines.append(text)
             lines.append('')
     return '\n'.join(lines)
+
+
+# ==================== SRT Normalize & Convert ====================
+def normalize_srt(text):
+    """Normalize SRT: remove empty cues, fix spacing, clean formatting."""
+    if not text.strip():
+        return ''
+    blocks = re.split(r'\n\s*\n', text.strip())
+    cleaned = []
+    for blk in blocks:
+        ln = [l.strip() for l in blk.strip().split('\n') if l.strip()]
+        if len(ln) < 3:
+            continue
+        idx_line = ln[0]
+        ts_line = ln[1]
+        txt_lines = ln[2:]
+        if '-->' not in ts_line or not idx_line.isdigit():
+            continue
+        txt = ' '.join(txt_lines).strip()
+        if not txt:
+            continue
+        ts_line = re.sub(r'\s+', ' ', ts_line)
+        cleaned.append(f'{idx_line}\n{ts_line}\n{txt}')
+    return '\n\n'.join(cleaned) + '\n'
+
+
+def srt_to_vtt(srt_text):
+    """Convert SRT to WebVTT format."""
+    normalized = normalize_srt(srt_text)
+    if not normalized.strip():
+        return 'WEBVTT\n\n'
+    vtt_lines = ['WEBVTT']
+    for blk in re.split(r'\n\s*\n', normalized.strip()):
+        ln = blk.strip().split('\n')
+        if len(ln) < 2:
+            continue
+        ts_line = ln[1] if len(ln) > 1 and '-->' in ln[1] else ln[0]
+        ts_line = ts_line.replace(',', '.')
+        txt = '\n'.join(ln[2:]) if len(ln) > 2 else ''
+        vtt_lines.append('')
+        vtt_lines.append(ts_line)
+        if txt:
+            vtt_lines.append(txt)
+    return '\n'.join(vtt_lines) + '\n'
 
 
 # ==================== FFmpeg helpers ====================
@@ -153,7 +197,7 @@ HTML = '''<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>VoiceCut — 音频转字幕</title>
+<title>VoxSub — 音频转字幕</title>
 <script src="https://unpkg.com/lucide@latest"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -218,13 +262,15 @@ h1 svg{width:20px;height:20px;stroke:var(--accent)}
     <button id="btnStart"><svg data-lucide="wand" stroke-width="1.5"></svg>开始转录</button>
     <div class="spacer"></div>
     <button class="sec" id="btn复制" disabled><svg data-lucide="copy" stroke-width="1.5"></svg>复制</button>
+    <button class="sec" id="btnNorm" disabled><svg data-lucide="align-left" stroke-width="1.5"></svg>标准化</button>
+    <button class="sec" id="btnDlVtt" disabled><svg data-lucide="file-down" stroke-width="1.5"></svg>下载 VTT</button>
     <button class="sec" id="btnDl" disabled><svg data-lucide="download" stroke-width="1.5"></svg>下载 SRT</button>
   </div>
 </div>
 
 <script>
 const $=id=>document.getElementById(id)
-const p=$("pathInput"),b=$("btnBrowse"),s=$("btnStart"),m=$("statusMsg"),bf=$("barFill"),sr=$("srtOutput"),cp=$("btn复制"),dl=$("btnDl")
+const p=$("pathInput"),b=$("btnBrowse"),s=$("btnStart"),m=$("statusMsg"),bf=$("barFill"),sr=$("srtOutput"),cp=$("btn复制"),dl=$("btnDl"),nn=$("btnNorm"),dv=$("btnDlVtt")
 
 function st(msg,cls,pct){m.textContent=msg;m.className="status"+(cls?" "+cls:"");if(pct!=null)bf.style.width=Math.min(100,pct)+"%"}
 function log(t){sr.value+=t;sr.scrollTop=sr.scrollHeight}
@@ -241,7 +287,7 @@ document.addEventListener("drop",e=>{e.preventDefault();const f=e.dataTransfer.f
 
 s.addEventListener("click",async()=>{
   const path=p.value.trim();if(!path){st("请先选择文件","err");return}
-  s.disabled=true;cp.disabled=true;dl.disabled=true;sr.value="";st("正在处理...","",0)
+  s.disabled=true;cp.disabled=true;dl.disabled=true;nn.disabled=true;dv.disabled=true;sr.value="";st("正在处理...","",0)
   try{
     const r=await fetch("/transcribe",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path})})
     if(!r.ok){const t=await r.text();throw new Error(t)}
@@ -263,7 +309,7 @@ s.addEventListener("click",async()=>{
           else if(type==="progress"){st(jd.status,"",jd.percent)}
           else if(type==="result"){
             sr.value=jd.srt;st("完成! "+jd.count+" 段","done",100)
-            cp.disabled=false;dl.disabled=false
+            cp.disabled=false;dl.disabled=false;nn.disabled=false;dv.disabled=false
           }
           else if(type==="error"){st("错误: "+jd.text,"err");log("[Error] "+jd.text+"\n")}
         }catch(e){}
@@ -281,6 +327,76 @@ dl.addEventListener("click",()=>{
   a.href=url;a.download=stem+".srt";document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url)
 })
 lucide.createIcons()
+// Normalize SRT via server
+nn.addEventListener("click",async()=>{
+  if(!sr.value.trim()) return
+  nn.disabled=true;st("标准化中...","",0)
+  try{
+    const r=await fetch("/convert",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({srt:sr.value,format:"normalized"})})
+    if(!r.ok){const t=await r.text();throw new Error(t)}
+    sr.value=await r.text();st("标准化完成","done",100)
+  }catch(e){st("标准化失败: "+e.message,"err")}
+  nn.disabled=false
+})
+
+// SRT→VTT client-side conversion + download
+dv.addEventListener("click",()=>{
+  const stem=p.value.replace(/^.*[/\\]/,"").replace(/[.][^.]+$/,"")||"字幕"
+  const lines=sr.value.split("\n");const out=["WEBVTT",""]
+  let i=0
+  while(i<lines.length){
+    const l=lines[i].trim()
+    if(l===""||/^\d+$/.test(l)){i++;continue}
+    if(l.includes("-->")){
+      out.push(l.replace(/,/g,"."))
+      i++;let txt=[]
+      while(i<lines.length&&lines[i].trim()!==""&&!/^\d+$/.test(lines[i].trim())&&!lines[i].includes("-->")){
+        txt.push(lines[i]);i++
+      }
+      if(txt.length)out.push(txt.join("\n"))
+      out.push("")
+    }else{i++}
+  }
+  const vtt=out.join("\n")
+  const blob=new Blob([vtt],{type:"text/vtt;charset=utf-8"})
+  const url=URL.createObjectURL(blob);const a=document.createElement("a")
+  a.href=url;a.download=stem+".vtt";document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url)
+})
+// Normalize SRT via server
+nn.addEventListener("click",async()=>{
+  if(!sr.value.trim()) return
+  nn.disabled=true;st("标准化中...","",0)
+  try{
+    const r=await fetch("/convert",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({srt:sr.value,format:"normalized"})})
+    if(!r.ok){const t=await r.text();throw new Error(t)}
+    sr.value=await r.text();st("标准化完成","done",100)
+  }catch(e){st("标准化失败: "+e.message,"err")}
+  nn.disabled=false
+})
+
+// SRT→VTT client-side conversion + download
+dv.addEventListener("click",()=>{
+  const stem=p.value.replace(/^.*[/\\]/,"").replace(/[.][^.]+$/,"")||"字幕"
+  const lines=sr.value.split("\n");const out=["WEBVTT",""]
+  let i=0
+  while(i<lines.length){
+    const l=lines[i].trim()
+    if(l===""||/^\d+$/.test(l)){i++;continue}
+    if(l.includes("-->")){
+      out.push(l.replace(/,/g,"."))
+      i++;let txt=[]
+      while(i<lines.length&&lines[i].trim()!==""&&!/^\d+$/.test(lines[i].trim())&&!lines[i].includes("-->")){
+        txt.push(lines[i]);i++
+      }
+      if(txt.length)out.push(txt.join("\n"))
+      out.push("")
+    }else{i++}
+  }
+  const vtt=out.join("\n")
+  const blob=new Blob([vtt],{type:"text/vtt;charset=utf-8"})
+  const url=URL.createObjectURL(blob);const a=document.createElement("a")
+  a.href=url;a.download=stem+".vtt";document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url)
+})
 </script>
 </body>
 </html>'''
@@ -296,6 +412,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         if urlparse(self.path).path == '/transcribe': self._transcribe()
+        elif urlparse(self.path).path == '/convert': self._convert()
         else: self.send_error(404)
 
     def _html(self):
@@ -332,6 +449,40 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             sse('error', {'text': str(e)[:300]})
 
+    def _convert(self):
+        cl = int(self.headers.get('Content-Length', 0))
+        body = json.loads(self.rfile.read(cl).decode('utf-8'))
+        srt_text = body.get('srt', '').strip()
+        to_format = body.get('format', 'vtt').strip().lower()
+
+        if not srt_text:
+            self.send_response(400)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(json.dumps({'error': 'No SRT content provided'}).encode('utf-8'))
+            return
+
+        self.send_response(200)
+        ct = 'text/vtt; charset=utf-8' if to_format == 'vtt' else 'text/plain; charset=utf-8'
+        self.send_header('Content-Type', ct)
+        self.send_header('Content-Disposition', 'attachment' if to_format == 'vtt' else 'inline')
+        self.end_headers()
+
+        try:
+            if to_format == 'vtt':
+                result = srt_to_vtt(srt_text)
+            elif to_format == 'normalized':
+                result = normalize_srt(srt_text)
+            else:
+                result = srt_text
+            self.wfile.write(result.encode('utf-8'))
+        except Exception as e:
+            self.send_response(500)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(json.dumps({'error': str(e)}).encode('utf-8'))
+
+
     def _sse_error(self, msg):
         self.send_response(500)
         self.send_header('Content-Type', 'text/event-stream; charset=utf-8')
@@ -351,7 +502,7 @@ def main():
     except Exception as e:
         print(f'Model load failed: {e}')
     srv = HTTPServer((HOST, PORT), Handler)
-    print(f'\n  VoiceCut Subtitle Server')
+    print(f'\n  VoxSub Subtitle Server')
     print(f'  http://{HOST}:{PORT}')
     print(f'  Ctrl+C to stop\n')
     try: srv.serve_forever()
@@ -360,3 +511,6 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+
+

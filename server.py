@@ -1,5 +1,5 @@
-#!/usr/bin/env python3
-"""VoiceCut — 音频裁剪 / 视频提取 / 音频转字幕"""
+﻿#!/usr/bin/env python3
+"""VoxSub — 视频音频提取 / 语音转字幕 / 字幕翻译"""
 
 import os, sys, json, re, uuid, tempfile, threading, subprocess, glob, time
 from urllib.parse import urlparse
@@ -11,7 +11,7 @@ MODEL_PATH = r'D:\Develop\Workspace\voicecut\models\whisper-turbo-ct2'
 FFMPEG = r'D:\Develop\ffmpeg\ffmpeg-8.1.2-full_build\bin\ffmpeg.exe'
 TEMP_DIR = os.path.join(tempfile.gettempdir(), 'voicecut')
 os.makedirs(TEMP_DIR, exist_ok=True)
-LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "voicecut.log")
+LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "voxsub.log")
 
 # Add CUDA DLL paths for ctranslate2
 _cuda_dll_paths = [
@@ -192,7 +192,7 @@ HTML = r'''<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>VoiceCut</title>
+<title>VoxSub</title>
 <script src="https://unpkg.com/lucide@latest"></script>
 <script src="https://cdn.jsdelivr.net/npm/lamejs@1.2.1/lame.min.js"></script>
 <style>
@@ -220,6 +220,9 @@ body{display:flex;justify-content:center;align-items:center}
 .row label.btn{padding:8px 12px;border:1px solid var(--border);border-radius:6px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;font-size:13px}
 .row label.btn:hover{border-color:var(--accent)}
 .row label.btn svg{width:16px;height:16px;stroke:var(--text)}
+.row button{padding:8px 12px;border:1px solid var(--border);border-radius:6px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;font-size:13px;background:transparent;color:var(--text)}
+.row button:hover{border-color:var(--accent)}
+.row button svg{width:16px;height:16px;stroke:var(--text)}
 .fmt-row{display:flex;gap:12px;align-items:center;flex-shrink:0}
 .fmt-row select{padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:transparent;color:var(--text);font-size:13px;cursor:pointer}
 .fmt-row label{font-size:12px;color:#7a7a9a}
@@ -303,7 +306,7 @@ body{display:flex;justify-content:center;align-items:center}
 </div>
 <div class="app">
 <div class="header">
-<h1><svg data-lucide="scissors" stroke-width="1.5"></svg>VoiceCut</h1>
+<h1><svg data-lucide="scissors" stroke-width="1.5"></svg>VoxSub</h1>
 <div class="tabs">
 <button class="active" data-tab="cutter"><svg data-lucide="audio-lines" stroke-width="1.5"></svg>裁剪</button>
 <button data-tab="extract"><svg data-lucide="video" stroke-width="1.5"></svg>提取</button>
@@ -315,7 +318,8 @@ body{display:flex;justify-content:center;align-items:center}
 <div class="panel active" id="p-cutter">
 <div class="row">
 <input type="text" id="cp-path" placeholder="粘贴音频路径，或点击选择文件">
-
+<input type="file" id="cp-file" accept="audio/*" hidden>
+<button id="cp-browse"><svg data-lucide="folder-open" stroke-width="1.5"></svg> Browse</button>
 </div>
 <div class="wf-wrap">
 <canvas id="cp-canvas"></canvas>
@@ -383,6 +387,7 @@ body{display:flex;justify-content:center;align-items:center}
  <button class="sec" id="sb-trans"><svg data-lucide="languages" stroke-width="1.5"></svg>翻译中文</button>
 <div class="spacer"></div>
 <button class="sec" id="sb-copy" disabled><svg data-lucide="copy" stroke-width="1.5"></svg>复制</button>
+<button class="sec" id="sb-dl-vtt" disabled><svg data-lucide="file-down" stroke-width="1.5"></svg>下载 VTT</button>
 <button class="sec" id="sb-dl" disabled><svg data-lucide="download" stroke-width="1.5"></svg>下载 SRT</button>
 </div>
 </div>
@@ -428,7 +433,7 @@ return Promise.reject(new Error('No file or path'))
 ;(function(){
 const cv=$('cp-canvas'),ctx=cv.getContext('2d')
 const play=$('cp-play'),exportBtn=$('cp-export'),fmt=$('cp-fmt'),sel=$('cp-sel')
-let buf=null,ch=0,sr=0,len=0,ss=0,se=0,hasSel=false,playing=false,srcNode=null
+let buf=null,ch=0,sr=0,len=0,ss=0,se=0,hasSel=false,playing=false,srcNode=null,audioCtx=null,audioBuf=null,playPos=0,animFrame=null
 
 function resize(){
 const p=cv.parentElement,pr=window.devicePixelRatio||1
@@ -440,9 +445,19 @@ function draw(){
 if(!buf)return;const w=cv.width,h=cv.height;ctx.clearRect(0,0,w,h)
 const yd=4,wr=w,wh=h-yd*2,cy=yd+wh/2,amp=wh*.44
 const dur=len/sr,pps=wr/dur
+const nPeaks = peakData&&peakData[0]?peakData[0].length:0
 for(let px=0;px<wr;px++){
-const t=px/pps,si=Math.floor(t*sr),ei=Math.floor((t+1/pps)*sr)
-let mx=0;for(let c=0;c<ch;c++){const d=buf[c];for(let s=Math.max(0,si);s<Math.min(ei,d.length);s++)mx=Math.max(mx,Math.abs(d[s]))}
+const t=px/pps
+let mx=0
+if(peakData&&nPeaks>0){
+const pi=Math.floor(t/(len/sr)*nPeaks)
+if(pi>=0&&pi<nPeaks){
+for(let c=0;c<ch;c++)mx=Math.max(mx,(peakData[c]||peakData[0])[pi])
+}
+}else{
+const si=Math.floor(t*sr),ei=Math.floor((t+1/pps)*sr)
+for(let c=0;c<ch;c++){const d=buf[c];for(let s=Math.max(0,si);s<Math.min(ei,d.length);s++)mx=Math.max(mx,Math.abs(d[s]))}
+}
 const x=px,hv=Math.max(mx*amp,.5),inSel=hasSel&&t>=ss&&t<=se
 if(inSel){ctx.fillStyle='rgba(239,107,58,.07)';ctx.fillRect(x,yd,1,wh)}
 ctx.fillStyle=inSel?'#ef6b3a':'#5b8def';ctx.fillRect(x,cy-hv,1,hv*2)
@@ -454,9 +469,99 @@ ctx.beginPath();ctx.moveTo(r,yd);ctx.lineTo(r,yd+wh);ctx.stroke();ctx.setLineDas
 ctx.fillStyle='rgba(239,107,58,.7)';ctx.font='11px sans-serif';ctx.textAlign='center'
 const d=se-ss;ctx.fillText(Math.round(d/60)+':'+String(Math.round(d%60)).padStart(2,'0'),(l+r)/2,yd+12)
 }
+// Playhead
+if(playing){
+const ppx = playPos * pps
+ctx.save()
+ctx.strokeStyle='#fff'
+ctx.lineWidth=1.5
+ctx.beginPath();ctx.moveTo(ppx,yd);ctx.lineTo(ppx,yd+wh);ctx.stroke()
+// Triangle indicator
+ctx.fillStyle='#fff'
+ctx.beginPath();ctx.moveTo(ppx,yd);ctx.lineTo(ppx-5,yd-6);ctx.lineTo(ppx+5,yd-6);ctx.closePath();ctx.fill()
+ctx.restore()
+}
 }
 
-// Cutter: load audio from path input (paste path, then click waveform area)
+// Cutter: audio loading
+
+let peakData = null
+const MAX_PEAKS = 1600
+
+async function loadAudio(){
+
+let ab
+const fi = document.getElementById("cp-file")
+if(fi && fi.files[0]){
+ab = await fi.files[0].arrayBuffer()
+}else{
+const pv = document.getElementById("cp-path").value.trim()
+if(!pv)return
+const r = await fetch("/file"+pv)
+if(!r.ok)throw new Error("Cannot load: "+pv)
+ab = await r.arrayBuffer()
+}
+const ac = new AudioContext()
+const abuf = await ac.decodeAudioData(ab)
+buf = []; for(let c=0;c<abuf.numberOfChannels;c++)buf.push(abuf.getChannelData(c))
+ch = abuf.numberOfChannels; sr = abuf.sampleRate; len = buf[0].length
+hasSel = true; ss = 0; se = len/sr
+
+// Pre-compute peaks for fast waveform drawing
+peakData = []
+const chunkSize = Math.max(1, Math.floor(len / MAX_PEAKS))
+for(let c=0;c<ch;c++){
+const p = []; const d = buf[c]
+for(let i=0;i<len;i+=chunkSize){
+let mx=0; const end=Math.min(i+chunkSize,len)
+for(let j=i;j<end;j++)mx = Math.max(mx, Math.abs(d[j]))
+p.push(mx)
+}
+peakData.push(p)
+}
+
+// Build reusable AudioBuffer for playback
+if(audioCtx){audioCtx.close().catch(()=>{})}
+audioCtx = new AudioContext()
+audioBuf = audioCtx.createBuffer(ch, len, sr)
+for(let c=0;c<ch;c++)audioBuf.copyToChannel(buf[c], c)
+playPos=ss
+
+resize()
+
+// Update path input from file if loaded via Browse
+if(fi && fi.files[0]){
+document.getElementById("cp-path").value = fi.files[0].name
+}
+}
+
+// Browse button
+const cpFileInput = document.getElementById("cp-file")
+const cpBrowseBtn = document.getElementById("cp-browse")
+if(cpBrowseBtn){
+cpBrowseBtn.addEventListener("click",()=>cpFileInput.click())
+cpFileInput.addEventListener("change",()=>{
+if(cpFileInput.files[0]){
+document.getElementById("cp-path").value = cpFileInput.files[0].name
+loadAudio()
+}
+})
+}
+
+// Path input: Enter key triggers local file load
+document.getElementById("cp-path").addEventListener("keydown",e=>{
+if(e.key==="Enter"){
+e.preventDefault()
+const pv = e.target.value.trim()
+if(pv){
+if(cpFileInput.files[0] && pv === cpFileInput.files[0].name){
+loadAudio()
+}else{
+loadAudio()
+}
+}
+}
+})
 
 let mdown=false,mx0=0
 cv.addEventListener('mousedown',e=>{if(!buf)return;const r=cv.getBoundingClientRect();mx0=(e.clientX-r.left)*(window.devicePixelRatio||1);mdown=true
@@ -466,17 +571,28 @@ const r=cv.getBoundingClientRect();const x=(e.clientX-r.left)*(window.devicePixe
 const t=x/cv.width*(len/sr);const t0=mx0/cv.width*(len/sr);ss=Math.min(t0,t);se=Math.max(t0,t);draw()})
 window.addEventListener('mouseup',()=>{if(!mdown)return;mdown=false;if(Math.abs(se-ss)<.005)hasSel=false;draw()})
 
+let playStartTime = 0
 play.addEventListener('click',()=>{
 if(playing){stop();return}
-if(!buf||!hasSel)return
-const ac=new AudioContext();if(ac.state==='suspended')ac.resume()
-const ab=ac.createBuffer(ch,len/ac.sampleRate,ac.sampleRate)
-for(let i=0;i<ch;i++)ab.copyToChannel(buf[i],i)
-srcNode=ac.createBufferSource();srcNode.buffer=ab;srcNode.connect(ac.destination)
-srcNode.start(0,ss,se-ss);playing=true;srcNode.onended=()=>{playing=false;draw()}
+if(!buf||!hasSel||!audioCtx||!audioBuf)return
+if(audioCtx.state==='suspended')audioCtx.resume()
+srcNode=audioCtx.createBufferSource();srcNode.buffer=audioBuf;srcNode.connect(audioCtx.destination)
+playPos=ss;playStartTime=audioCtx.currentTime
+srcNode.start(0,ss,se-ss);playing=true
+srcNode.onended=()=>{playing=false;cancelAnimationFrame(animFrame);animFrame=null;draw()}
+function tick(){
+if(!playing)return
+playPos=ss+(audioCtx.currentTime-playStartTime)
+if(playPos>se)playPos=se
+draw()
+animFrame=requestAnimationFrame(tick)
+}
+animFrame=requestAnimationFrame(tick)
 play.innerHTML='<svg data-lucide="pause" stroke-width="2"></svg>';lucide.createIcons()
 })
 function stop(){playing=false;if(srcNode)try{srcNode.stop()}catch(e){}srcNode=null
+if(animFrame){cancelAnimationFrame(animFrame);animFrame=null}
+playPos=ss;draw()
 play.innerHTML='<svg data-lucide="play" stroke-width="2"></svg>';lucide.createIcons()}
 
 exportBtn.addEventListener('click',()=>{
@@ -545,11 +661,11 @@ const fp=p.value.trim()
 _srtOriginal=out.value;_srtTranslated='';_isTranslated=false
 const lang=$('sb-lang')?.value||'auto',speed=$('sb-speed')?.value||'fast'
 if(!fp){set('请输入文件路径','err');return}
-btn.disabled=true;cp.disabled=true;dl.disabled=true;out.value='';set('正在处理...','',0)
+btn.disabled=true;cp.disabled=true;dl.disabled=true;const dv2=$('sb-dl-vtt');if(dv2)dv2.disabled=true;out.value='';set('正在处理...','',0)
 try{
 let r=await fetch('/transcribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:fp,language:lang,speed:speed})});if(!r.ok){const t=await r.text();throw new Error(t)}
 await readSSE(r,{log:j=>{const ta=document.getElementById('sb-out');if(ta)ta.value+=j.text;ta.scrollTop=ta.scrollHeight},status:j=>{set(j,'',0)},progress:j=>{set(j.text,'',j.percent)},
-result:j=>{out.value=j.srt;set('完成! '+j.count+' 段','done',100);cp.disabled=false;dl.disabled=false},
+result:j=>{out.value=j.srt;set('完成! '+j.count+' 段','done',100);cp.disabled=false;dl.disabled=false;const dv=$('sb-dl-vtt');if(dv)dv.disabled=false},
 error:j=>{set('错误: '+j.text,'err')}})
 }catch(e){set('连接错误: '+e.message,'err')}
 btn.disabled=false
@@ -584,6 +700,21 @@ const blob=new Blob([out.value],{type:'text/plain;charset=utf-8'}),url=URL.creat
 const a=document.createElement('a');a.href=url;a.download=s2+'.srt'
 document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url)
 })
+// VTT download
+const dvBtn = $('sb-dl-vtt')
+if(dvBtn){
+dvBtn.addEventListener('click',()=>{
+const s2=p.value.replace(/^.*[/\\\\]/,'').replace(/[.][^.]+$/,'')||'字幕'
+const lines=out.value.split('\n');const vtt=['WEBVTT',''];let i=0
+while(i<lines.length){
+const l=lines[i].trim()
+if(l===''||/^\d+$/.test(l)){i++;continue}
+if(l.includes('-->')){vtt.push(l.replace(/,/g,'.'));i++;let t=[];while(i<lines.length&&lines[i].trim()!==''&&!/^\d+$/.test(lines[i].trim())&&!lines[i].includes('-->')){t.push(lines[i]);i++};if(t.length)vtt.push(t.join('\n'));vtt.push('')}else{i++}
+}
+const blob=new Blob([vtt.join('\n')],{type:'text/vtt;charset=utf-8'}),url=URL.createObjectURL(blob)
+const a=document.createElement('a');a.href=url;a.download=s2+'.vtt';document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url)
+})
+}
 })()
 lucide.createIcons()
 
@@ -964,9 +1095,12 @@ def main():
     try: get_whisper(); print('Model loaded.')
     except Exception as e: print(f'Warning: {e}')
     srv = HTTPServer((HOST, PORT), Handler)
-    print(f'\n  VoiceCut  http://{HOST}:{PORT}\n')
+    print(f'\n  VoxSub  http://{HOST}:{PORT}\n')
     try: srv.serve_forever()
     except KeyboardInterrupt: srv.server_close()
 
 if __name__ == '__main__':
     main()
+
+
+

@@ -1,5 +1,5 @@
-#!/usr/bin/env python3
-"""VoiceCut Extract — 本地视频提取音频 (FFmpeg)"""
+﻿#!/usr/bin/env python3
+"""VoxSub Extract — 本地视频提取音频 (FFmpeg)"""
 
 import os, sys, json, re, uuid, tempfile, struct, threading, subprocess, shutil
 from urllib.parse import urlparse
@@ -50,7 +50,7 @@ HTML = '''<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>VoiceCut - 视频转音频</title>
+<title>VoxSub - 视频转音频</title>
 <script src="https://unpkg.com/lucide@latest"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -308,7 +308,7 @@ def main():
         main_cli()
     else:
         srv = HTTPServer((HOST, PORT), Handler)
-        print(f'\n  VoiceCut -- local video to audio (FFmpeg)')
+        print(f'\n  VoxSub -- local video to audio (FFmpeg)')
         print(f'  http://{HOST}:{PORT}')
         print(f'  Ctrl+C to stop\n')
         try: srv.serve_forever()
@@ -317,3 +317,6 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+
+

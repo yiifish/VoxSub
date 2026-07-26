@@ -452,20 +452,27 @@ function drawWaveform() {
   const centerY = wr.y + wr.h / 2;
   const amp = (wr.h / 2) * 0.88;
 
+  // Pre-compute peaks for fast drawing (max 1600 chunks)
+  const MAX_PEAKS = 1600;
+  const totalSamples = chData[0].length;
+  const chunkSize = Math.max(1, Math.floor(totalSamples / MAX_PEAKS));
+  const peakCache = [];
+  for (let ch = 0; ch < nCh; ch++) {
+    const d = chData[ch]; const p = [];
+    for (let i = 0; i < totalSamples; i += chunkSize) {
+      let mx = 0; const end = Math.min(i + chunkSize, totalSamples);
+      for (let j = i; j < end; j++) mx = Math.max(mx, Math.abs(d[j]));
+      p.push(mx);
+    }
+    peakCache.push(p);
+  }
+
   for (let px = 0; px < wr.w; px++) {
     const t = px / pxPerSec;
-    const startS = Math.floor(t * buf.sampleRate);
-    const endS = Math.floor((t + 1 / pxPerSec) * buf.sampleRate);
-
+    const pi = Math.floor(t / dur * peakCache[0].length);
     let maxVal = 0;
-    for (let ch = 0; ch < nCh; ch++) {
-      const data = chData[ch];
-      const clampedStart = Math.max(0, startS);
-      const clampedEnd = Math.min(endS, data.length);
-      for (let s = clampedStart; s < clampedEnd; s++) {
-        const v = Math.abs(data[s]);
-        if (v > maxVal) maxVal = v;
-      }
+    if (pi >= 0 && pi < peakCache[0].length) {
+      for (let ch = 0; ch < nCh; ch++) maxVal = Math.max(maxVal, peakCache[ch][pi]);
     }
 
     const x = wr.x + px;
