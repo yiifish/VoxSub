@@ -846,7 +846,6 @@ class Handler(BaseHTTPRequestHandler):
             if not file_path or not os.path.isfile(file_path):
                 sse('file_error', {'file': os.path.basename(file_path or ''), 'file_index': fi, 'total': total, 'error': 'File not found'})
                 continue
-            # Use source file's directory unless output_dir is explicitly provided
             src_dir = os.path.dirname(os.path.abspath(file_path)) or '.'
             output_dir = output_dir_override if output_dir_override else src_dir
             os.makedirs(output_dir, exist_ok=True)
@@ -854,73 +853,38 @@ class Handler(BaseHTTPRequestHandler):
             audio_path = os.path.join(output_dir, f'{name}_audio.{fmt}')
             srt_path = os.path.join(output_dir, f'{name}.srt')
             srt_zh_path = os.path.join(output_dir, f'{name}_zh.srt')
+            # Step 1: Extract audio
             sse('file_progress', {'file': name, 'file_index': fi, 'total': total, 'step': 'extract', 'percent': 0, 'step_n': 1, 'step_total': 3})
             try:
                 sse('file_progress', {'file': name, 'file_index': fi, 'total': total, 'step': 'extract', 'percent': 10, 'step_n': 1, 'step_total': 3, 'substep': 'Extracting audio via FFmpeg...'})
-                subprocess.run([FFMPEG, '-y', '-i', file_path, '-vn', '-c:a', 'pcm_s16le' if fmt == 'wav' else 'libmp3lame', *([] if fmt == 'wav' else ['-b:a', '192k']), '-threads', '0', audio_path], capture_output=True, check=True)
+                extract_audio_ffmpeg(file_path, fmt, audio_path)
                 sse('file_progress', {'file': name, 'file_index': fi, 'total': total, 'step': 'extract', 'percent': 100, 'step_n': 1, 'step_total': 3})
             except Exception as e:
                 sse('file_progress', {'file': name, 'file_index': fi, 'total': total, 'step': 'extract', 'percent': -1, 'step_n': 1, 'step_total': 3, 'error': str(e)[:200]})
                 continue
+            # Step 2: Transcribe
             sse('file_progress', {'file': name, 'file_index': fi, 'total': total, 'step': 'transcribe', 'percent': 0, 'step_n': 2, 'step_total': 3})
+            srt_capture = {}
+            def pipeline_trans_sse(ev_type, data):
+                if ev_type == 'progress':
+                    sse('file_progress', {'file': name, 'file_index': fi, 'total': total, 'step': 'transcribe', 'percent': data.get('percent', 0), 'step_n': 2, 'step_total': 3})
+                elif ev_type == 'result':
+                    srt_capture['srt'] = data.get('srt', '')
+                elif ev_type == 'error':
+                    srt_capture['error'] = data.get('text', 'Unknown error')
             try:
-                srt_text = ""
-                t0 = time.time()
-                seg_pattern = os.path.join(output_dir, f'{name}_seg_%03d.mp3')
-                # Clean up old segment files from previous runs
-                for oldf in glob.glob(os.path.join(output_dir, f'{name}_seg_*.mp3')):
-                    try: os.remove(oldf)
-                    except: pass
-                sse('file_progress', {'file': name, 'file_index': fi, 'total': total, 'step': 'transcribe', 'percent': 5, 'step_n': 2, 'step_total': 3, 'substep': 'Splitting audio into 60s segments...'})
-                subprocess.run([FFMPEG, '-y', '-i', audio_path, '-f', 'segment', '-segment_time', '60',
-                                '-c:a', 'libmp3lame', '-b:a', '64k', '-reset_timestamps', '1', seg_pattern],
-                               capture_output=True, check=True)
-                seg_files = sorted(glob.glob(os.path.join(output_dir, f'{name}_seg_*.mp3')))
-                sse('file_progress', {'file': name, 'file_index': fi, 'total': total, 'step': 'transcribe', 'percent': 10, 'step_n': 2, 'step_total': 3, 'substep': f'{len(seg_files)} segments created, starting transcription...'})
-                model = get_whisper()
-                all_segs = []
-                if seg_files:
-                    import ctranslate2
-                    _is_cu = ctranslate2.get_cuda_device_count() > 0
-                    def transcribe_seg(idx_sp):
-                        idx, sp = idx_sp
-                        segs_iter, info = model.transcribe(sp, beam_size=1, vad_filter=True, language=lang)
-                        local = []
-                        offset = idx * 60.0
-                        for sg in segs_iter:
-                            sg.start += offset; sg.end += offset
-                            local.append(sg)
-                        return local, idx
-                    if _is_cu:
-                        for i, sp in enumerate(seg_files):
-                            local, _ = transcribe_seg((i, sp))
-                            all_segs.extend(local)
-                            pct = int(((i + 1) / len(seg_files)) * 90)
-                            sse('file_progress', {'file': name, 'file_index': fi, 'total': total, 'step': 'transcribe', 'percent': pct, 'step_n': 2, 'step_total': 3})
-                    else:
-                        from concurrent.futures import ThreadPoolExecutor, as_completed
-                        MAX_W = min(2, len(seg_files))
-                        done = 0; lock = threading.Lock()
-                        with ThreadPoolExecutor(max_workers=MAX_W) as pool:
-                            fut_map = {pool.submit(transcribe_seg, (i, p)): i for i, p in enumerate(seg_files)}
-                            for fut in as_completed(fut_map):
-                                segs_local, seg_idx = fut.result()
-                                with lock:
-                                    all_segs.extend(segs_local)
-                                    done += 1
-                                    pct = 10 + int((done / len(seg_files)) * 85)
-                                    sse('file_progress', {'file': name, 'file_index': fi, 'total': total, 'step': 'transcribe', 'percent': pct, 'step_n': 2, 'step_total': 3})
-                    all_segs.sort(key=lambda s: s.start)
-                    for sp in seg_files:
-                        try: os.remove(sp)
-                        except: pass
-                sse('file_progress', {'file': name, 'file_index': fi, 'total': total, 'step': 'transcribe', 'percent': 95, 'step_n': 2, 'step_total': 3, 'substep': 'Writing SRT file...'})
-                srt_text = to_srt(all_segs)
-                with open(srt_path, 'w', encoding='utf-8') as f: f.write(srt_text)
+                transcribe_audio(audio_path, pipeline_trans_sse, lang, beam_size=1)
+                if 'error' in srt_capture:
+                    sse('file_progress', {'file': name, 'file_index': fi, 'total': total, 'step': 'transcribe', 'percent': -1, 'step_n': 2, 'step_total': 3, 'error': srt_capture['error'][:200]})
+                    continue
+                srt_text = srt_capture.get('srt', '')
+                if srt_text:
+                    with open(srt_path, 'w', encoding='utf-8') as f: f.write(srt_text)
                 sse('file_progress', {'file': name, 'file_index': fi, 'total': total, 'step': 'transcribe', 'percent': 100, 'step_n': 2, 'step_total': 3})
             except Exception as e:
                 sse('file_progress', {'file': name, 'file_index': fi, 'total': total, 'step': 'transcribe', 'percent': -1, 'step_n': 2, 'step_total': 3, 'error': str(e)[:200]})
                 continue
+            # Step 3: Translate
             sse('file_progress', {'file': name, 'file_index': fi, 'total': total, 'step': 'translate', 'percent': 0, 'step_n': 3, 'step_total': 3})
             try:
                 from deep_translator import GoogleTranslator
@@ -949,7 +913,6 @@ class Handler(BaseHTTPRequestHandler):
                 continue
             sse('file_done', {'file': name, 'file_index': fi, 'total': total, 'audio': audio_path, 'srt': srt_path, 'srt_zh': srt_zh_path})
         sse('all_done', {'total': total})
-
     def _handle_translate(self):
         cl = int(self.headers.get('Content-Length', 0))
         body = json.loads(self.rfile.read(cl).decode('utf-8'))
