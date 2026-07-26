@@ -4,11 +4,16 @@
   <a href="https://python.org"><img src="https://img.shields.io/badge/python-3.9+-blue" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" /></a>
 </p>
+<p align="center">
+  <a href="#english"><img src="https://img.shields.io/badge/README-English-blue" /></a>
+  <a href="#chinese"><img src="https://img.shields.io/badge/README-%E4%B8%AD%E6%96%87-red" /></a>
+</p>
 
 ---
 
-<details open>
-<summary><b>English</b></summary>
+<div id="english">
+
+## English
 
 VoxSub is a fully offline toolset for video/audio subtitle generation. Drop in a video or audio file and get SRT subtitles in one shot — audio extraction, speech transcription, subtitle generation, and machine translation — all running locally with CUDA GPU acceleration powered by faster-whisper and CTranslate2.
 
@@ -48,7 +53,7 @@ from faster_whisper import download_model
 download_model("turbo", output_dir="models/whisper-turbo-ct2")
 ```
 
-Pre-converted models are available on HuggingFace. `turbo` (~1.6 GB) is recommended for a good speed/quality balance; `large-v3` (~3.1 GB) gives the best accuracy. Update `MODEL_PATH` in `server.py` to match the output directory.
+`turbo` (~1.6 GB) is recommended for a good speed/quality balance; `large-v3` (~3.1 GB) gives the best accuracy. Update `MODEL_PATH` in `server.py` accordingly.
 
 Alternatively, convert from HuggingFace yourself:
 
@@ -125,10 +130,13 @@ Tweak these at the top of each source file:
 
 MIT
 
-</details>
+</div>
 
-<details>
-<summary><b>中文</b></summary>
+---
+
+<div id="chinese">
+
+## 中文
 
 VoxSub 是一套本地离线运行的音视频字幕处理工具集。拖入视频或音频，一键完成：提取音频、语音转录、生成 SRT 字幕、翻译为中文。基于 faster-whisper + CTranslate2 引擎，支持 CUDA GPU 加速。
 
@@ -245,4 +253,4 @@ python subtitle.py          # 纯音频转字幕 → :8765
 
 MIT
 
-</details>
+</div>
