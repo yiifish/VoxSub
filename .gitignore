@@ -1,4 +1,36 @@
-*.pyc
+﻿# Python
 __pycache__/
+*.py[cod]
+*.class
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Project specific
 models/
 voicecut.log
+temp/
+*.wav
+*.mp3
+*.srt
+
+# Local config
+.env
+.env.local
